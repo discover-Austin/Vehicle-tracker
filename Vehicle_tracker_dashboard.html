@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle Tracking System - Command Center</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        .map-container {
+            height: 500px;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .5; }
+        }
+        .detection-marker {
+            animation: fadeIn 0.5s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.8); }
+            to { opacity: 1; transform: scale(1); }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Simulated backend API
+        class VehicleTrackingAPI {
+            constructor() {
+                this.cameras = [
+                    { id: "CAM_001", location: [37.7749, -122.4194], name: "Market St & 5th", status: "active" },
+                    { id: "CAM_002", location: [37.7750, -122.4180], name: "Mission St & 6th", status: "active" },
+                    { id: "CAM_003", location: [37.7760, -122.4190], name: "Howard St & 4th", status: "active" },
+                    { id: "CAM_004", location: [37.7740, -122.4200], name: "Folsom St & 7th", status: "active" },
+                    { id: "CAM_005", location: [37.7770, -122.4170], name: "Bryant St & 3rd", status: "active" }
+                ];
+                this.detections = [];
+                this.searches = new Map();
+            }
+
+            registerSearch(vehicleData) {
+                const searchId = `SEARCH_${Date.now()}`;
+                this.searches.set(searchId, {
+                    id: searchId,
+                    ...vehicleData,
+                    startTime: new Date(),
+                    detections: []
+                });
+                return searchId;
+            }
+
+            // Simulate detection events
+            simulateDetection(searchId) {
+                if (!this.searches.has(searchId)) return null;
+
+                const camera = this.cameras[Math.floor(Math.random() * this.cameras.length)];
+                const search = this.searches.get(searchId);
+
+                const detection = {
+                    id: `DET_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                    searchId,
+                    timestamp: new Date(),
+                    cameraId: camera.id,
+                    cameraName: camera.name,
+                    location: camera.location,
+                    confidence: 0.75 + Math.random() * 0.24,
+                    vehicleData: {
+                        licensePlate: search.licensePlate,
+                        make: search.make,
+                        model: search.model,
+                        color: search.color
+                    }
+                };
+
+                search.detections.push(detection);
+                this.detections.push(detection);
+                return detection;
+            }
+
+            getCameras() {
+                return this.cameras;
+            }
+
+            getDetections(searchId) {
+                if (!this.searches.has(searchId)) return [];
+                return this.searches.get(searchId).detections;
+            }
+
+            getActiveSearches() {
+                return Array.from(this.searches.values());
+            }
+        }
+
+        const api = new VehicleTrackingAPI();
+
+        function VehicleTrackingDashboard() {
+            const [searches, setSearches] = useState([]);
+            const [selectedSearch, setSelectedSearch] = useState(null);
+            const [detections, setDetections] = useState([]);
+            const [cameras, setCameras] = useState([]);
+            const [showSearchForm, setShowSearchForm] = useState(false);
+            const [alerts, setAlerts] = useState([]);
+            const mapRef = useRef(null);
+            const mapInstanceRef = useRef(null);
+            const markersRef = useRef([]);
+
+            useEffect(() => {
+                setCameras(api.getCameras());
+            }, []);
+
+            useEffect(() => {
+                if (!selectedSearch) return;
+
+                // Simulate detection events
+                const interval = setInterval(() => {
+                    if (Math.random() > 0.7) { // 30% chance per interval
+                        const detection = api.simulateDetection(selectedSearch.id);
+                        if (detection) {
+                            setDetections(prev => [...prev, detection]);
+                            addAlert({
+                                type: 'detection',
+                                message: `Vehicle detected at ${detection.cameraName}`,
+                                confidence: detection.confidence,
+                                timestamp: detection.timestamp
+                            });
+                            updateMap(detection);
+                        }
+                    }
+                }, 5000); // Check every 5 seconds
+
+                return () => clearInterval(interval);
+            }, [selectedSearch]);
+
+            useEffect(() => {
+                if (mapRef.current && !mapInstanceRef.current) {
+                    // Initialize map
+                    mapInstanceRef.current = L.map(mapRef.current).setView([37.7749, -122.4194], 14);
+                    
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors'
+                    }).addTo(mapInstanceRef.current);
+
+                    // Add camera markers
+                    cameras.forEach(camera => {
+                        const marker = L.marker(camera.location, {
+                            icon: L.divIcon({
+                                className: 'camera-marker',
+                                html: `<div class="bg-blue-600 rounded-full w-4 h-4 border-2 border-white"></div>`,
+                                iconSize: [16, 16]
+                            })
+                        }).addTo(mapInstanceRef.current);
+                        
+                        marker.bindPopup(`<b>${camera.name}</b><br>Camera ID: ${camera.id}<br>Status: ${camera.status}`);
+                    });
+                }
+            }, [cameras]);
+
+            const updateMap = (detection) => {
+                if (!mapInstanceRef.current) return;
+
+                // Add detection marker with pulse effect
+                const marker = L.marker(detection.location, {
+                    icon: L.divIcon({
+                        className: 'detection-marker',
+                        html: `<div class="bg-red-500 rounded-full w-6 h-6 border-2 border-white pulse shadow-lg"></div>`,
+                        iconSize: [24, 24]
+                    })
+                }).addTo(mapInstanceRef.current);
+
+                marker.bindPopup(`
+                    <b>Vehicle Detected!</b><br>
+                    Camera: ${detection.cameraName}<br>
+                    Time: ${detection.timestamp.toLocaleTimeString()}<br>
+                    Confidence: ${(detection.confidence * 100).toFixed(1)}%
+                `);
+
+                markersRef.current.push(marker);
+
+                // Draw trajectory line if multiple detections
+                if (detections.length > 1) {
+                    const latlngs = detections.map(d => d.location);
+                    L.polyline(latlngs, {
+                        color: 'red',
+                        weight: 3,
+                        opacity: 0.7,
+                        dashArray: '10, 10'
+                    }).addTo(mapInstanceRef.current);
+                }
+
+                // Pan to new detection
+                mapInstanceRef.current.panTo(detection.location);
+            };
+
+            const addAlert = (alert) => {
+                const alertWithId = { ...alert, id: Date.now() };
+                setAlerts(prev => [alertWithId, ...prev].slice(0, 10));
+                
+                // Auto-remove after 10 seconds
+                setTimeout(() => {
+                    setAlerts(prev => prev.filter(a => a.id !== alertWithId.id));
+                }, 10000);
+            };
+
+            const startNewSearch = (vehicleData) => {
+                const searchId = api.registerSearch(vehicleData);
+                const search = api.getActiveSearches().find(s => s.id === searchId);
+                setSearches(prev => [...prev, search]);
+                setSelectedSearch(search);
+                setDetections([]);
+                setShowSearchForm(false);
+                
+                // Clear previous markers
+                markersRef.current.forEach(m => m.remove());
+                markersRef.current = [];
+            };
+
+            return (
+                <div className="min-h-screen p-6">
+                    <div className="max-w-7xl mx-auto">
+                        {/* Header */}
+                        <div className="mb-8">
+                            <h1 className="text-4xl font-bold mb-2 flex items-center gap-3">
+                                <svg className="w-10 h-10 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                                Vehicle Tracking System
+                            </h1>
+                            <p className="text-gray-400">Real-time vehicle detection across public camera network</p>
+                        </div>
+
+                        {/* Alerts Bar */}
+                        {alerts.length > 0 && (
+                            <div className="mb-6 space-y-2">
+                                {alerts.map(alert => (
+                                    <div key={alert.id} className="bg-red-900/50 border border-red-700 rounded-lg p-4 flex items-start gap-3 detection-marker">
+                                        <svg className="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                        </svg>
+                                        <div className="flex-1">
+                                            <p className="font-semibold text-red-200">{alert.message}</p>
+                                            <p className="text-sm text-red-300 mt-1">
+                                                Confidence: {(alert.confidence * 100).toFixed(1)}% • {alert.timestamp.toLocaleTimeString()}
+                                            </p>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            {/* Control Panel */}
+                            <div className="lg:col-span-1 space-y-6">
+                                {/* New Search Button */}
+                                <button
+                                    onClick={() => setShowSearchForm(!showSearchForm)}
+                                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
+                                >
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                    </svg>
+                                    New Search
+                                </button>
+
+                                {/* Search Form */}
+                                {showSearchForm && <SearchForm onSubmit={startNewSearch} onCancel={() => setShowSearchForm(false)} />}
+
+                                {/* Active Searches */}
+                                <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                                    <h2 className="text-xl font-semibold mb-4">Active Searches</h2>
+                                    {searches.length === 0 ? (
+                                        <p className="text-gray-400 text-sm">No active searches</p>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {searches.map(search => (
+                                                <div
+                                                    key={search.id}
+                                                    onClick={() => {
+                                                        setSelectedSearch(search);
+                                                        setDetections(api.getDetections(search.id));
+                                                    }}
+                                                    className={`p-4 rounded-lg cursor-pointer transition-all ${
+                                                        selectedSearch?.id === search.id
+                                                            ? 'bg-blue-600 ring-2 ring-blue-400'
+                                                            : 'bg-gray-700 hover:bg-gray-650'
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <div className="w-2 h-2 bg-green-500 rounded-full pulse"></div>
+                                                        <span className="font-semibold text-sm">{search.licensePlate}</span>
+                                                    </div>
+                                                    <p className="text-sm text-gray-300">{search.make} {search.model}</p>
+                                                    <p className="text-xs text-gray-400 mt-1">Color: {search.color}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Camera Status */}
+                                <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                                    <h2 className="text-xl font-semibold mb-4">Camera Network</h2>
+                                    <div className="space-y-2">
+                                        {cameras.map(camera => (
+                                            <div key={camera.id} className="flex items-center justify-between p-2 bg-gray-700 rounded">
+                                                <div>
+                                                    <p className="text-sm font-medium">{camera.name}</p>
+                                                    <p className="text-xs text-gray-400">{camera.id}</p>
+                                                </div>
+                                                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Main Display */}
+                            <div className="lg:col-span-2 space-y-6">
+                                {/* Map */}
+                                <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                                    <h2 className="text-xl font-semibold mb-4">Live Map View</h2>
+                                    <div ref={mapRef} className="map-container"></div>
+                                </div>
+
+                                {/* Detection History */}
+                                {selectedSearch && (
+                                    <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                                        <h2 className="text-xl font-semibold mb-4">Detection Timeline</h2>
+                                        {detections.length === 0 ? (
+                                            <p className="text-gray-400 text-sm">No detections yet. Monitoring cameras...</p>
+                                        ) : (
+                                            <div className="space-y-3 max-h-96 overflow-y-auto">
+                                                {detections.slice().reverse().map(detection => (
+                                                    <div key={detection.id} className="bg-gray-700 rounded-lg p-4 border-l-4 border-red-500">
+                                                        <div className="flex justify-between items-start mb-2">
+                                                            <div>
+                                                                <p className="font-semibold">{detection.cameraName}</p>
+                                                                <p className="text-sm text-gray-400">{detection.cameraId}</p>
+                                                            </div>
+                                                            <span className="text-xs bg-green-600 px-2 py-1 rounded">
+                                                                {(detection.confidence * 100).toFixed(1)}%
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-sm text-gray-300">
+                                                            {detection.timestamp.toLocaleString()}
+                                                        </p>
+                                                        <div className="mt-2 text-xs text-gray-400">
+                                                            Location: {detection.location[0].toFixed(4)}, {detection.location[1].toFixed(4)}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function SearchForm({ onSubmit, onCancel }) {
+            const [formData, setFormData] = useState({
+                licensePlate: '',
+                make: '',
+                model: '',
+                color: '',
+                year: ''
+            });
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                onSubmit(formData);
+                setFormData({ licensePlate: '', make: '', model: '', color: '', year: '' });
+            };
+
+            return (
+                <form onSubmit={handleSubmit} className="bg-gray-800 rounded-lg p-6 border border-gray-700 space-y-4">
+                    <h3 className="text-lg font-semibold mb-4">Register New Search</h3>
+                    
+                    <div>
+                        <label className="block text-sm font-medium mb-2">License Plate *</label>
+                        <input
+                            type="text"
+                            required
+                            value={formData.licensePlate}
+                            onChange={e => setFormData({...formData, licensePlate: e.target.value})}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                            placeholder="ABC1234"
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium mb-2">Make</label>
+                            <input
+                                type="text"
+                                value={formData.make}
+                                onChange={e => setFormData({...formData, make: e.target.value})}
+                                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                placeholder="Toyota"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium mb-2">Model</label>
+                            <input
+                                type="text"
+                                value={formData.model}
+                                onChange={e => setFormData({...formData, model: e.target.value})}
+                                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                placeholder="Camry"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                        <div>
+                            <label className="block text-sm font-medium mb-2">Color</label>
+                            <input
+                                type="text"
+                                value={formData.color}
+                                onChange={e => setFormData({...formData, color: e.target.value})}
+                                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                placeholder="Silver"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium mb-2">Year</label>
+                            <input
+                                type="text"
+                                value={formData.year}
+                                onChange={e => setFormData({...formData, year: e.target.value})}
+                                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                placeholder="2018"
+                            />
+                        </div>
+                    </div>
+
+                    <div className="flex gap-3 pt-2">
+                        <button
+                            type="submit"
+                            className="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded transition-colors"
+                        >
+                            Start Search
+                        </button>
+                        <button
+                            type="button"
+                            onClick={onCancel}
+                            className="flex-1 bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded transition-colors"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </form>
+            );
+        }
+
+        ReactDOM.render(<VehicleTrackingDashboard />, document.getElementById('root'));
+    </script>
+</body>
+</html>
