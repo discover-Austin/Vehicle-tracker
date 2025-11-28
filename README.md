@@ -515,7 +515,11 @@ PORT=3001
 
 ## License
 
-MIT License - See LICENSE file for details
+**PROPRIETARY - ALL RIGHTS RESERVED**
+
+This software is proprietary and confidential. Unauthorized copying, distribution, modification, or use of this software, via any medium, is strictly prohibited without express written permission from the copyright holder.
+
+See LICENSE file for complete terms and conditions.
 
 ## Support
 
